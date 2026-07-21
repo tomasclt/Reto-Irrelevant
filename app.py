@@ -4,6 +4,13 @@ import os
 
 import pandas as pd
 import streamlit as st
+from openai import (
+    APIConnectionError,
+    APIStatusError,
+    APITimeoutError,
+    AuthenticationError,
+    RateLimitError,
+)
 
 from src.ai import ask_nvidia
 from src.analytics import (
@@ -33,7 +40,11 @@ from src.data import (
     load_demo,
     validate_and_normalize,
 )
-from src.exports import csv_bytes, excel_bytes, pdf_bytes
+from src.exports import (
+    csv_bytes,
+    excel_bytes,
+    pdf_bytes,
+)
 from src.security import sanitize_question
 
 
@@ -51,39 +62,79 @@ st.markdown(
 
 
 def money(value: float) -> str:
+    """
+    Convierte un valor numérico a formato monetario
+    sin decimales.
+    """
     return f"${value:,.0f}".replace(",", ".")
 
 
 def init_state() -> None:
+    """
+    Inicializa los datos y el historial de conversación.
+    """
     if "dataset" not in st.session_state:
         demo = load_demo(DEMO_DATA_PATH)
 
         st.session_state.dataset = demo.dataframe
         st.session_state.file_results = [demo]
-        st.session_state.data_mode = "Datos de demostración"
+        st.session_state.data_mode = (
+            "Datos de demostración"
+        )
 
     if "chat" not in st.session_state:
         st.session_state.chat = []
 
 
 def get_secret() -> str | None:
+    """
+    Obtiene la API key desde Streamlit Secrets
+    o desde una variable de entorno.
+    """
     try:
-        return st.secrets.get("NVIDIA_API_KEY")
+        value = st.secrets.get(
+            "NVIDIA_API_KEY"
+        )
+
+        if value:
+            return str(value).strip()
+
     except Exception:
-        return os.getenv("NVIDIA_API_KEY")
+        pass
+
+    value = os.getenv(
+        "NVIDIA_API_KEY"
+    )
+
+    return (
+        value.strip()
+        if value
+        else None
+    )
 
 
 init_state()
 
 
+# -------------------------------------------------------------------------
+# Barra lateral
+# -------------------------------------------------------------------------
+
 with st.sidebar:
     st.markdown(
-        '<div class="eyebrow">Sales intelligence</div>',
+        '<div class="eyebrow">'
+        "Sales intelligence"
+        "</div>",
         unsafe_allow_html=True,
     )
 
-    st.markdown("## ◈ Reto_Irrelevant")
-    st.caption("Datos claros. Decisiones mejores.")
+    st.markdown(
+        "## ◈ Reto_Irrelevant"
+    )
+
+    st.caption(
+        "Datos claros. Decisiones mejores."
+    )
 
     page = st.radio(
         "Navegación",
@@ -104,7 +155,8 @@ with st.sidebar:
     df_all = st.session_state.dataset
 
     st.caption(
-        f"Fuente activa: {st.session_state.data_mode}"
+        f"Fuente activa: "
+        f"{st.session_state.data_mode}"
     )
 
     if not df_all.empty:
@@ -114,7 +166,9 @@ with st.sidebar:
             f"{df_all.fecha.max():%d/%m/%Y}"
         )
     else:
-        st.caption("Sin registros")
+        st.caption(
+            "Sin registros"
+        )
 
 
 # -------------------------------------------------------------------------
@@ -123,7 +177,10 @@ with st.sidebar:
 
 filtered = df_all
 
-if page not in {"Carga de datos"} and not df_all.empty:
+if (
+    page != "Carga de datos"
+    and not df_all.empty
+):
     with st.expander(
         "Filtros globales",
         expanded=False,
@@ -132,37 +189,54 @@ if page not in {"Carga de datos"} and not df_all.empty:
             [1, 1, 1.3, 1.3]
         )
 
-        min_d = df_all.fecha.min().date()
-        max_d = df_all.fecha.max().date()
+        min_date = (
+            df_all.fecha.min().date()
+        )
+
+        max_date = (
+            df_all.fecha.max().date()
+        )
 
         start = c1.date_input(
             "Desde",
-            min_d,
-            min_value=min_d,
-            max_value=max_d,
+            min_date,
+            min_value=min_date,
+            max_value=max_date,
         )
 
         end = c2.date_input(
             "Hasta",
-            max_d,
-            min_value=min_d,
-            max_value=max_d,
+            max_date,
+            min_value=min_date,
+            max_value=max_date,
         )
 
         clients = c3.multiselect(
             "Clientes",
-            sorted(df_all.cliente.unique()),
+            sorted(
+                df_all.cliente
+                .dropna()
+                .astype(str)
+                .unique()
+                .tolist()
+            ),
         )
 
         products = c4.multiselect(
             "Productos",
-            sorted(df_all.producto.unique()),
+            sorted(
+                df_all.producto
+                .dropna()
+                .astype(str)
+                .unique()
+                .tolist()
+            ),
         )
 
         if start > end:
             st.error(
-                "La fecha inicial no puede ser posterior "
-                "a la fecha final."
+                "La fecha inicial no puede "
+                "ser posterior a la fecha final."
             )
             st.stop()
 
@@ -197,8 +271,9 @@ if page == "Inicio":
 
     st.markdown(
         '<p class="subtle">'
-        "Un tablero gerencial y asistente conversacional "
-        "que transforma archivos CSV en señales claras de negocio."
+        "Un tablero gerencial y asistente "
+        "conversacional que transforma archivos "
+        "CSV en señales claras de negocio."
         "</p>",
         unsafe_allow_html=True,
     )
@@ -206,6 +281,7 @@ if page == "Inicio":
     st.write("")
 
     metrics = kpis(filtered)
+
     columns = st.columns(4)
 
     labels = [
@@ -222,39 +298,64 @@ if page == "Inicio":
         money(metrics["ticket"]),
     ]
 
-    for column, label, value in zip(
+    for (
+        column,
+        label,
+        value,
+    ) in zip(
         columns,
         labels,
         values,
     ):
         column.markdown(
             '<div class="card">'
-            f'<div class="metric-label">{label}</div>'
-            f'<div class="metric-value">{value}</div>'
+            f'<div class="metric-label">'
+            f"{label}"
+            "</div>"
+            f'<div class="metric-value">'
+            f"{value}"
+            "</div>"
             "</div>",
             unsafe_allow_html=True,
         )
 
     st.write("")
 
-    left, right = st.columns([1.35, 0.65])
+    left, right = st.columns(
+        [1.35, 0.65]
+    )
 
     with left:
-        st.markdown("### Resumen ejecutivo")
+        st.markdown(
+            "### Resumen ejecutivo"
+        )
 
-        for item in executive_insights(filtered):
+        for item in executive_insights(
+            filtered
+        ):
             st.markdown(
-                f'<div class="insight">{item}</div>',
+                f'<div class="insight">'
+                f"{item}"
+                "</div>",
                 unsafe_allow_html=True,
             )
 
     with right:
-        st.markdown("### Estado del negocio")
+        st.markdown(
+            "### Estado del negocio"
+        )
 
-        month_table = monthly(filtered)
-        status = "Información inicial"
+        month_table = monthly(
+            filtered
+        )
+
+        status = (
+            "Información inicial"
+        )
+
         description = (
-            "Carga más periodos para detectar tendencias."
+            "Carga más periodos para "
+            "detectar tendencias."
         )
 
         if len(month_table) >= 2:
@@ -270,29 +371,39 @@ if page == "Inicio":
 
             status = (
                 "Atención"
-                if sales_down and ticket_down
+                if sales_down
+                and ticket_down
                 else "Estable"
             )
 
             description = (
-                "Las ventas y el ticket requieren revisión."
+                "Las ventas y el ticket "
+                "requieren revisión."
                 if status == "Atención"
                 else
-                "No se observan dos señales negativas simultáneas."
+                "No se observan dos señales "
+                "negativas simultáneas."
             )
 
         st.markdown(
             '<div class="card">'
-            '<div class="metric-label">Diagnóstico</div>'
-            f'<div class="metric-value">{status}</div>'
-            f'<p class="subtle">{description}</p>'
+            '<div class="metric-label">'
+            "Diagnóstico"
+            "</div>"
+            '<div class="metric-value">'
+            f"{status}"
+            "</div>"
+            '<p class="subtle">'
+            f"{description}"
+            "</p>"
             "</div>",
             unsafe_allow_html=True,
         )
 
         st.info(
-            "El estado es una señal orientativa basada "
-            "en reglas, no una predicción financiera."
+            "El estado es una señal "
+            "orientativa basada en reglas, "
+            "no una predicción financiera."
         )
 
 
@@ -301,12 +412,15 @@ if page == "Inicio":
 # -------------------------------------------------------------------------
 
 elif page == "Carga de datos":
-    st.markdown("# Carga y consolidación")
+    st.markdown(
+        "# Carga y consolidación"
+    )
 
     st.write(
-        "Carga varios CSV de diferentes periodos. "
-        "La aplicación valida, normaliza y consolida "
-        "los registros dentro de esta sesión."
+        "Carga varios CSV de diferentes "
+        "periodos. La aplicación valida, "
+        "normaliza y consolida los registros "
+        "dentro de esta sesión."
     )
 
     uploaded = st.file_uploader(
@@ -315,24 +429,28 @@ elif page == "Carga de datos":
         accept_multiple_files=True,
         help=(
             "Máximo 10 MB por archivo. "
-            "Columnas requeridas: fecha, cliente, producto y valor."
+            "Columnas requeridas: fecha, "
+            "cliente, producto y valor."
         ),
     )
 
     remove_duplicates = st.checkbox(
-        "Excluir duplicados exactos al consolidar",
+        "Excluir duplicados exactos "
+        "al consolidar",
         value=False,
         help=(
-            "Se considera duplicado exacto la coincidencia "
-            "de fecha, cliente, producto y valor."
+            "Se considera duplicado exacto "
+            "la coincidencia de fecha, cliente, "
+            "producto y valor."
         ),
     )
 
     if uploaded:
         if len(uploaded) > MAX_FILES:
             st.error(
-                f"Seleccionaste {len(uploaded)} archivos. "
-                f"El máximo permitido es {MAX_FILES}."
+                f"Seleccionaste {len(uploaded)} "
+                f"archivos. El máximo permitido "
+                f"es {MAX_FILES}."
             )
 
         else:
@@ -348,15 +466,23 @@ elif page == "Carga de datos":
                 [
                     {
                         "archivo": result.name,
-                        "filas_originales": result.raw_rows,
-                        "filas_validas": result.valid_rows,
+                        "filas_originales": (
+                            result.raw_rows
+                        ),
+                        "filas_validas": (
+                            result.valid_rows
+                        ),
                         "estado": (
                             "Aceptado"
-                            if result.dataframe is not None
+                            if result.dataframe
+                            is not None
                             else "Rechazado"
                         ),
-                        "observaciones": " | ".join(
-                            result.errors + result.warnings
+                        "observaciones": (
+                            " | ".join(
+                                result.errors
+                                + result.warnings
+                            )
                         ),
                     }
                     for result in results
@@ -369,19 +495,26 @@ elif page == "Carga de datos":
                 hide_index=True,
             )
 
-            if any(
-                result.dataframe is not None
+            valid_results = [
+                result
                 for result in results
-            ):
+                if result.dataframe
+                is not None
+            ]
+
+            if valid_results:
                 try:
                     candidate = consolidate(
                         results,
-                        remove_duplicates=remove_duplicates,
+                        remove_duplicates=(
+                            remove_duplicates
+                        ),
                     )
 
                     st.success(
                         "Consolidado listo: "
-                        f"{len(candidate):,} registros válidos."
+                        f"{len(candidate):,} "
+                        "registros válidos."
                     )
 
                     st.dataframe(
@@ -394,35 +527,53 @@ elif page == "Carga de datos":
                         "Usar este consolidado",
                         type="primary",
                     ):
-                        st.session_state.dataset = candidate
-                        st.session_state.file_results = results
-                        st.session_state.data_mode = (
-                            f"{len(results)} archivo(s) cargado(s)"
+                        st.session_state.dataset = (
+                            candidate
                         )
+
+                        st.session_state.file_results = (
+                            results
+                        )
+
+                        st.session_state.data_mode = (
+                            f"{len(valid_results)} "
+                            "archivo(s) válido(s)"
+                        )
+
                         st.session_state.chat = []
 
                         st.success(
-                            "Datos activados. "
-                            "Puedes continuar al Dashboard."
+                            "Datos activados."
                         )
 
                         st.rerun()
 
                 except ValueError as exc:
-                    st.error(str(exc))
+                    st.error(
+                        str(exc)
+                    )
 
     c1, c2 = st.columns(2)
 
     if c1.button(
         "Restaurar datos de demostración"
     ):
-        demo = load_demo(DEMO_DATA_PATH)
+        demo = load_demo(
+            DEMO_DATA_PATH
+        )
 
-        st.session_state.dataset = demo.dataframe
-        st.session_state.file_results = [demo]
+        st.session_state.dataset = (
+            demo.dataframe
+        )
+
+        st.session_state.file_results = [
+            demo
+        ]
+
         st.session_state.data_mode = (
             "Datos de demostración"
         )
+
         st.session_state.chat = []
 
         st.rerun()
@@ -435,7 +586,9 @@ elif page == "Carga de datos":
                 "2026-01-01,Cliente ejemplo,"
                 "Producto ejemplo,100000\n"
             ).encode("utf-8-sig"),
-            file_name="plantilla_pedidos.csv",
+            file_name=(
+                "plantilla_pedidos.csv"
+            ),
             mime="text/csv",
         )
 
@@ -445,15 +598,21 @@ elif page == "Carga de datos":
 # -------------------------------------------------------------------------
 
 elif page == "Dashboard":
-    st.markdown("# Dashboard gerencial")
+    st.markdown(
+        "# Dashboard gerencial"
+    )
 
     if filtered.empty:
         st.warning(
-            "No hay datos con los filtros seleccionados."
+            "No hay datos con los "
+            "filtros seleccionados."
         )
         st.stop()
 
-    metrics = kpis(filtered)
+    metrics = kpis(
+        filtered
+    )
+
     columns = st.columns(4)
 
     columns[0].metric(
@@ -476,17 +635,23 @@ elif page == "Dashboard":
         money(metrics["ticket"]),
     )
 
-    month_table = monthly(filtered)
+    month_table = monthly(
+        filtered
+    )
 
     c1, c2 = st.columns(2)
 
     c1.plotly_chart(
-        sales_line(month_table),
+        sales_line(
+            month_table
+        ),
         use_container_width=True,
     )
 
     c2.plotly_chart(
-        orders_bar(month_table),
+        orders_bar(
+            month_table
+        ),
         use_container_width=True,
     )
 
@@ -534,7 +699,9 @@ elif page == "Dashboard":
 # -------------------------------------------------------------------------
 
 elif page == "Clientes":
-    st.markdown("# Inteligencia de clientes")
+    st.markdown(
+        "# Inteligencia de clientes"
+    )
 
     table = by_dimension(
         filtered,
@@ -542,7 +709,9 @@ elif page == "Clientes":
     )
 
     if table.empty:
-        st.warning("No hay datos disponibles.")
+        st.warning(
+            "No hay datos disponibles."
+        )
         st.stop()
 
     st.dataframe(
@@ -566,13 +735,17 @@ elif page == "Clientes":
         filtered.cliente == selected
     ]
 
-    client_metrics = kpis(client_df)
+    client_metrics = kpis(
+        client_df
+    )
 
     c1, c2, c3 = st.columns(3)
 
     c1.metric(
         "Ventas",
-        money(client_metrics["ventas"]),
+        money(
+            client_metrics["ventas"]
+        ),
     )
 
     c2.metric(
@@ -582,11 +755,15 @@ elif page == "Clientes":
 
     c3.metric(
         "Ticket promedio",
-        money(client_metrics["ticket"]),
+        money(
+            client_metrics["ticket"]
+        ),
     )
 
     st.plotly_chart(
-        sales_line(monthly(client_df)),
+        sales_line(
+            monthly(client_df)
+        ),
         use_container_width=True,
     )
 
@@ -611,7 +788,9 @@ elif page == "Clientes":
 # -------------------------------------------------------------------------
 
 elif page == "Productos":
-    st.markdown("# Inteligencia de productos")
+    st.markdown(
+        "# Inteligencia de productos"
+    )
 
     table = by_dimension(
         filtered,
@@ -619,7 +798,9 @@ elif page == "Productos":
     )
 
     if table.empty:
-        st.warning("No hay datos disponibles.")
+        st.warning(
+            "No hay datos disponibles."
+        )
         st.stop()
 
     st.dataframe(
@@ -643,13 +824,17 @@ elif page == "Productos":
         filtered.producto == selected
     ]
 
-    product_metrics = kpis(product_df)
+    product_metrics = kpis(
+        product_df
+    )
 
     c1, c2, c3 = st.columns(3)
 
     c1.metric(
         "Ventas",
-        money(product_metrics["ventas"]),
+        money(
+            product_metrics["ventas"]
+        ),
     )
 
     c2.metric(
@@ -663,7 +848,9 @@ elif page == "Productos":
     )
 
     st.plotly_chart(
-        sales_line(monthly(product_df)),
+        sales_line(
+            monthly(product_df)
+        ),
         use_container_width=True,
     )
 
@@ -693,16 +880,23 @@ elif page == "Asistente IA":
     )
 
     st.caption(
-        "Python calcula y verifica las métricas; "
-        "NVIDIA interpreta los resultados y los registros relevantes."
+        "Python calcula y verifica las "
+        "métricas; NVIDIA interpreta los "
+        "resultados y los registros relevantes."
     )
 
     api_key = get_secret()
 
     if not api_key:
         st.warning(
-            "La API key de NVIDIA no está configurada. "
-            "El dashboard funciona, pero el chat estará deshabilitado."
+            "La API key de NVIDIA no está "
+            "configurada. El dashboard funciona, "
+            "pero el chat está deshabilitado."
+        )
+
+        st.code(
+            'NVIDIA_API_KEY = "nvapi-TU_CLAVE_REAL"',
+            language="toml",
         )
 
     prompts = [
@@ -713,18 +907,29 @@ elif page == "Asistente IA":
     ]
 
     prompt_columns = st.columns(2)
+
     chosen = None
 
-    for index, prompt in enumerate(prompts):
-        if prompt_columns[index % 2].button(
+    for index, prompt in enumerate(
+        prompts
+    ):
+        clicked = prompt_columns[
+            index % 2
+        ].button(
             prompt,
             key=f"prompt_{index}",
-        ):
+        )
+
+        if clicked:
             chosen = prompt
 
     for message in st.session_state.chat:
-        with st.chat_message(message["role"]):
-            st.markdown(message["content"])
+        with st.chat_message(
+            message["role"]
+        ):
+            st.markdown(
+                message["content"]
+            )
 
     typed = st.chat_input(
         "Pregunta sobre ventas, clientes, "
@@ -736,13 +941,20 @@ elif page == "Asistente IA":
     question = chosen or typed
 
     if question and api_key:
-        question = sanitize_question(
-            question,
-            MAX_QUESTION_LENGTH,
-        )
+        try:
+            question = sanitize_question(
+                question,
+                MAX_QUESTION_LENGTH,
+            )
 
-        # Se guarda el historial antes de añadir la pregunta actual.
-        # Esto evita enviarla dos veces al modelo.
+        except Exception as exc:
+            st.error(
+                "La pregunta no pudo validarse.\n\n"
+                f"Tipo: {type(exc).__name__}\n\n"
+                f"Detalle: {str(exc)[:500]}"
+            )
+            st.stop()
+
         conversation_history = (
             st.session_state.chat.copy()
         )
@@ -755,9 +967,13 @@ elif page == "Asistente IA":
         )
 
         with st.chat_message("user"):
-            st.markdown(question)
+            st.markdown(
+                question
+            )
 
-        with st.chat_message("assistant"):
+        with st.chat_message(
+            "assistant"
+        ):
             with st.spinner(
                 "Analizando datos..."
             ):
@@ -765,32 +981,104 @@ elif page == "Asistente IA":
                     context = ai_context(
                         df=filtered,
                         question=question,
-                        history=conversation_history,
+                        history=(
+                            conversation_history
+                        ),
+                        max_rows=100,
                     )
 
                     answer = ask_nvidia(
                         api_key=api_key,
                         question=question,
                         context=context,
-                        history=conversation_history,
+                        history=(
+                            conversation_history
+                        ),
                     )
+
+                except AuthenticationError as exc:
+                    answer = (
+                        "NVIDIA rechazó la clave API. "
+                        "Revisa el secreto "
+                        "`NVIDIA_API_KEY` en Streamlit.\n\n"
+                        f"Detalle técnico: "
+                        f"{str(exc)[:700]}"
+                    )
+
+                except RateLimitError as exc:
+                    answer = (
+                        "NVIDIA rechazó temporalmente "
+                        "la solicitud por límite de uso "
+                        "o cuota.\n\n"
+                        f"Detalle técnico: "
+                        f"{str(exc)[:700]}"
+                    )
+
+                except APITimeoutError as exc:
+                    answer = (
+                        "La consulta superó el tiempo "
+                        "máximo de espera. Prueba una "
+                        "pregunta más específica.\n\n"
+                        f"Detalle técnico: "
+                        f"{str(exc)[:700]}"
+                    )
+
+                except APIConnectionError as exc:
+                    answer = (
+                        "No fue posible establecer "
+                        "conexión con NVIDIA.\n\n"
+                        f"Detalle técnico: "
+                        f"{str(exc)[:700]}"
+                    )
+
+                except APIStatusError as exc:
+                    status_code = getattr(
+                        exc,
+                        "status_code",
+                        "desconocido",
+                    )
+
+                    request_id = getattr(
+                        exc,
+                        "request_id",
+                        None,
+                    )
+
+                    answer = (
+                        "NVIDIA respondió con un error "
+                        f"HTTP {status_code}.\n\n"
+                        f"Detalle técnico: "
+                        f"{str(exc)[:700]}"
+                    )
+
+                    if request_id:
+                        answer += (
+                            "\n\nID de solicitud: "
+                            f"{request_id}"
+                        )
 
                 except ValueError as exc:
                     answer = (
-                        "No fue posible procesar la consulta: "
-                        f"{exc}"
+                        "No fue posible procesar "
+                        "la consulta.\n\n"
+                        f"Detalle técnico: "
+                        f"{str(exc)[:700]}"
                     )
 
-                except Exception:
+                except Exception as exc:
                     answer = (
-                        "No fue posible consultar el modelo "
-                        "en este momento. Los indicadores y "
-                        "gráficos continúan disponibles; revisa "
-                        "la clave, la cuota o el estado del "
-                        "endpoint de NVIDIA."
+                        "Se produjo un error interno "
+                        "al preparar o procesar la "
+                        "consulta.\n\n"
+                        f"Tipo: "
+                        f"{type(exc).__name__}\n\n"
+                        f"Detalle técnico: "
+                        f"{str(exc)[:700]}"
                     )
 
-                st.markdown(answer)
+                st.markdown(
+                    answer
+                )
 
         st.session_state.chat.append(
             {
@@ -807,7 +1095,9 @@ elif page == "Asistente IA":
 
         st.rerun()
 
-    if st.button("Limpiar conversación"):
+    if st.button(
+        "Limpiar conversación"
+    ):
         st.session_state.chat = []
         st.rerun()
 
@@ -818,7 +1108,8 @@ elif page == "Asistente IA":
 
 elif page == "Informe y descargas":
     st.markdown(
-        "# Informe ejecutivo y exportaciones"
+        "# Informe ejecutivo "
+        "y exportaciones"
     )
 
     if filtered.empty:
@@ -827,9 +1118,13 @@ elif page == "Informe y descargas":
         )
         st.stop()
 
-    for item in executive_insights(filtered):
+    for item in executive_insights(
+        filtered
+    ):
         st.markdown(
-            f'<div class="insight">{item}</div>',
+            f'<div class="insight">'
+            f"{item}"
+            "</div>",
             unsafe_allow_html=True,
         )
 
@@ -839,28 +1134,40 @@ elif page == "Informe y descargas":
 
     c1.download_button(
         "Descargar CSV",
-        csv_bytes(filtered),
-        "ventas_filtradas.csv",
-        "text/csv",
+        data=csv_bytes(
+            filtered
+        ),
+        file_name=(
+            "ventas_filtradas.csv"
+        ),
+        mime="text/csv",
         use_container_width=True,
     )
 
     c2.download_button(
         "Descargar Excel",
-        excel_bytes(filtered),
-        "reporte_ventas.xlsx",
-        (
-            "application/vnd.openxmlformats-officedocument."
-            "spreadsheetml.sheet"
+        data=excel_bytes(
+            filtered
+        ),
+        file_name=(
+            "reporte_ventas.xlsx"
+        ),
+        mime=(
+            "application/vnd.openxmlformats-"
+            "officedocument.spreadsheetml.sheet"
         ),
         use_container_width=True,
     )
 
     c3.download_button(
         "Descargar PDF",
-        pdf_bytes(filtered),
-        "informe_ejecutivo.pdf",
-        "application/pdf",
+        data=pdf_bytes(
+            filtered
+        ),
+        file_name=(
+            "informe_ejecutivo.pdf"
+        ),
+        mime="application/pdf",
         use_container_width=True,
     )
 
